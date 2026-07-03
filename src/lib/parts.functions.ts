@@ -1,0 +1,362 @@
+import { createServerFn } from "@tanstack/react-start";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { z } from "zod";
+
+// ---- Types shared with client -----------------------------------------
+
+export const CompatibleVehicle = z.object({
+  brand: z.string(),
+  model: z.string(),
+  years: z.string().optional().nullable(),
+});
+
+export const IdentifyOutput = z.object({
+  name: z.string(),
+  description: z.string().optional().nullable(),
+  oem_code: z.string().optional().nullable(),
+  alt_codes: z.array(z.string()).default([]),
+  material: z.string().optional().nullable(),
+  measurements: z
+    .object({
+      length: z.string().optional().nullable(),
+      width: z.string().optional().nullable(),
+      height: z.string().optional().nullable(),
+      diameter: z.string().optional().nullable(),
+      thickness: z.string().optional().nullable(),
+    })
+    .partial()
+    .optional()
+    .nullable(),
+  weight: z.string().optional().nullable(),
+  torque: z.string().optional().nullable(),
+  position: z.string().optional().nullable(),
+  side: z.string().optional().nullable(),
+  difficulty: z.string().optional().nullable(),
+  tools: z.array(z.string()).default([]),
+  avg_time: z.string().optional().nullable(),
+  compatible_vehicles: z.array(CompatibleVehicle).default([]),
+  confidence: z.number().min(0).max(1),
+  notes: z.string().optional().nullable(),
+});
+
+export type IdentifyOutputT = z.infer<typeof IdentifyOutput>;
+
+const NOT_FOUND = "Informação não encontrada em base oficial.";
+
+const SYSTEM_PROMPT = `Você é o AutoBusque IA, um especialista em identificação de peças automotivas para veículos nacionais e importados. Você recebe uma foto de uma peça (e opcionalmente contexto de veículo) e retorna dados técnicos estruturados.
+
+REGRAS ABSOLUTAS:
+1. Você NUNCA inventa códigos OEM, medidas, torque, materiais ou compatibilidades. Se não tiver certeza de um dado, retorne exatamente a string "${NOT_FOUND}" naquele campo (ou null / array vazio quando aplicável).
+2. Sempre retorne um valor honesto de "confidence" entre 0 e 1 representando quão confiante você está no diagnóstico geral.
+3. Idioma: português do Brasil.
+4. "position" descreve onde a peça fica no veículo (ex.: "suspensão dianteira", "sistema de arrefecimento").
+5. "side" quando aplicável: "esquerdo", "direito", "central" ou null.
+6. "compatible_vehicles" só deve conter veículos que você tem confiança real de compatibilidade. Vazio se não souber.
+7. Responda APENAS em JSON válido conforme o schema pedido, sem markdown.`;
+
+// ---- Server fns --------------------------------------------------------
+
+export const identifyPart = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        imageBase64: z.string().min(100), // data URL or raw base64
+        mimeType: z.string().default("image/jpeg"),
+        vehicleContext: z
+          .object({
+            brand: z.string().optional(),
+            model: z.string().optional(),
+            year: z.string().optional(),
+            version: z.string().optional(),
+            engine: z.string().optional(),
+            vin: z.string().optional(),
+          })
+          .partial()
+          .optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const apiKey = process.env.LOVABLE_API_KEY;
+    if (!apiKey) throw new Error("LOVABLE_API_KEY não configurada");
+
+    // 1. Upload image to storage
+    const rawBase64 = data.imageBase64.includes(",")
+      ? data.imageBase64.split(",")[1]
+      : data.imageBase64;
+    const bytes = Uint8Array.from(atob(rawBase64), (c) => c.charCodeAt(0));
+    const ext = data.mimeType.split("/")[1] || "jpg";
+    const filename = `${userId}/${crypto.randomUUID()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from("part-images")
+      .upload(filename, bytes, { contentType: data.mimeType, upsert: false });
+    if (upErr) throw new Error("Falha ao salvar imagem: " + upErr.message);
+
+    // 2. Build vehicle context prompt fragment
+    const ctx = data.vehicleContext;
+    const ctxLine =
+      ctx && Object.values(ctx).some(Boolean)
+        ? `Contexto do veículo informado pelo usuário: ${JSON.stringify(ctx)}`
+        : "Nenhum contexto de veículo foi informado.";
+
+    const userText = `${ctxLine}
+
+Analise a foto anexada e identifique a peça automotiva. Retorne APENAS um JSON válido no formato:
+{
+  "name": string,
+  "description": string | null,
+  "oem_code": string | null,
+  "alt_codes": string[],
+  "material": string | null,
+  "measurements": { "length"?: string, "width"?: string, "height"?: string, "diameter"?: string, "thickness"?: string } | null,
+  "weight": string | null,
+  "torque": string | null,
+  "position": string | null,
+  "side": "esquerdo" | "direito" | "central" | null,
+  "difficulty": "fácil" | "média" | "difícil" | null,
+  "tools": string[],
+  "avg_time": string | null,
+  "compatible_vehicles": [{ "brand": string, "model": string, "years": string | null }],
+  "confidence": number (0..1),
+  "notes": string | null
+}
+
+Lembre: campos desconhecidos DEVEM ser null, string vazia "${NOT_FOUND}", ou array vazio — nunca inventados.`;
+
+    // 3. Call Lovable AI Gateway (chat completions, multimodal)
+    const gatewayRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: userText },
+              {
+                type: "image_url",
+                image_url: { url: `data:${data.mimeType};base64,${rawBase64}` },
+              },
+            ],
+          },
+        ],
+        response_format: { type: "json_object" },
+      }),
+    });
+
+    if (!gatewayRes.ok) {
+      const errText = await gatewayRes.text();
+      if (gatewayRes.status === 429) {
+        throw new Error("Limite de requisições da IA atingido. Tente novamente em instantes.");
+      }
+      if (gatewayRes.status === 402) {
+        throw new Error("Créditos de IA esgotados. Adicione créditos no workspace.");
+      }
+      throw new Error(`Falha na IA (${gatewayRes.status}): ${errText.slice(0, 200)}`);
+    }
+
+    const aiJson = await gatewayRes.json();
+    const rawContent = aiJson.choices?.[0]?.message?.content ?? "{}";
+    let parsed: IdentifyOutputT;
+    try {
+      const obj = typeof rawContent === "string" ? JSON.parse(rawContent) : rawContent;
+      parsed = IdentifyOutput.parse(obj);
+    } catch (e) {
+      console.error("AI parse fail:", e, rawContent);
+      throw new Error("A IA retornou um formato inesperado. Tente uma foto mais clara.");
+    }
+
+    // 4. Persist part row
+    const { data: partRow, error: insErr } = await supabase
+      .from("parts")
+      .insert({
+        user_id: userId,
+        name: parsed.name,
+        oem_code: parsed.oem_code,
+        alt_codes: parsed.alt_codes,
+        description: parsed.description,
+        material: parsed.material,
+        measurements: parsed.measurements ?? {},
+        weight: parsed.weight,
+        torque: parsed.torque,
+        position: parsed.position,
+        side: parsed.side,
+        difficulty: parsed.difficulty,
+        tools: parsed.tools,
+        avg_time: parsed.avg_time,
+        compatible_vehicles: parsed.compatible_vehicles,
+        image_path: filename,
+        ai_confidence: parsed.confidence,
+        ai_raw: parsed,
+        vehicle_context: ctx ?? null,
+      })
+      .select("id")
+      .single();
+    if (insErr) throw new Error("Falha ao salvar peça: " + insErr.message);
+
+    // 5. History
+    await supabase.from("search_history").insert({
+      user_id: userId,
+      kind: "image",
+      query: { vehicleContext: ctx ?? null },
+      part_id: partRow.id,
+    });
+
+    return { id: partRow.id };
+  });
+
+export const getPart = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    const { data: part, error } = await supabase
+      .from("parts")
+      .select("*")
+      .eq("id", data.id)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!part) throw new Error("Peça não encontrada");
+    let imageUrl: string | null = null;
+    if (part.image_path) {
+      const { data: signed } = await supabase.storage
+        .from("part-images")
+        .createSignedUrl(part.image_path, 3600);
+      imageUrl = signed?.signedUrl ?? null;
+    }
+    const { data: fav } = await supabase
+      .from("favorites")
+      .select("id")
+      .eq("kind", "part")
+      .eq("target_id", data.id)
+      .maybeSingle();
+    return { part, imageUrl, isFavorite: !!fav };
+  });
+
+export const listHistory = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase } = context;
+    const { data, error } = await supabase
+      .from("search_history")
+      .select("id, kind, query, part_id, created_at, parts:part_id(id, name, oem_code, ai_confidence, image_path)")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) throw new Error(error.message);
+    return data ?? [];
+  });
+
+export const listFavorites = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase } = context;
+    const { data, error } = await supabase
+      .from("favorites")
+      .select("id, kind, target_id, created_at, parts:target_id(id, name, oem_code, ai_confidence, image_path)")
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    return data ?? [];
+  });
+
+export const toggleFavorite = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({ kind: z.enum(["part", "vehicle"]), targetId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { data: existing } = await supabase
+      .from("favorites")
+      .select("id")
+      .eq("kind", data.kind)
+      .eq("target_id", data.targetId)
+      .maybeSingle();
+    if (existing) {
+      await supabase.from("favorites").delete().eq("id", existing.id);
+      return { favorited: false };
+    }
+    await supabase.from("favorites").insert({
+      user_id: userId,
+      kind: data.kind,
+      target_id: data.targetId,
+    });
+    return { favorited: true };
+  });
+
+export const searchTextHistory = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        q: z.string().optional(),
+        brand: z.string().optional(),
+        model: z.string().optional(),
+        year: z.string().optional(),
+        oem: z.string().optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    // Save the search
+    await supabase.from("search_history").insert({
+      user_id: userId,
+      kind: "text",
+      query: data,
+    });
+    // Search user's own identified parts
+    let q = supabase.from("parts").select("id, name, oem_code, ai_confidence, image_path, position").order("created_at", { ascending: false });
+    if (data.q) q = q.ilike("name", `%${data.q}%`);
+    if (data.oem) q = q.ilike("oem_code", `%${data.oem}%`);
+    const { data: results, error } = await q.limit(50);
+    if (error) throw new Error(error.message);
+    return { results: results ?? [] };
+  });
+
+export const getSignedImage = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ path: z.string() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { data: signed } = await context.supabase.storage
+      .from("part-images")
+      .createSignedUrl(data.path, 3600);
+    return { url: signed?.signedUrl ?? null };
+  });
+
+export const getProfile = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase
+      .from("profiles")
+      .select("id, full_name, profile_type")
+      .eq("id", context.userId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data;
+  });
+
+export const updateProfile = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        full_name: z.string().min(1).max(120),
+        profile_type: z.enum(["mechanic", "parts_shop", "dealership", "consumer"]),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("profiles")
+      .update({ full_name: data.full_name, profile_type: data.profile_type })
+      .eq("id", context.userId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
