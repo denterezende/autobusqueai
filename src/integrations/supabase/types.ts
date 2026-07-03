@@ -14,7 +14,200 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      favorites: {
+        Row: {
+          created_at: string
+          id: string
+          kind: Database["public"]["Enums"]["favorite_kind"]
+          target_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind: Database["public"]["Enums"]["favorite_kind"]
+          target_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: Database["public"]["Enums"]["favorite_kind"]
+          target_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      parts: {
+        Row: {
+          ai_confidence: number | null
+          ai_raw: Json | null
+          alt_codes: string[] | null
+          avg_time: string | null
+          compatible_vehicles: Json | null
+          created_at: string
+          description: string | null
+          difficulty: string | null
+          id: string
+          image_path: string | null
+          material: string | null
+          measurements: Json | null
+          name: string
+          oem_code: string | null
+          position: string | null
+          side: string | null
+          tools: string[] | null
+          torque: string | null
+          user_id: string
+          vehicle_context: Json | null
+          weight: string | null
+        }
+        Insert: {
+          ai_confidence?: number | null
+          ai_raw?: Json | null
+          alt_codes?: string[] | null
+          avg_time?: string | null
+          compatible_vehicles?: Json | null
+          created_at?: string
+          description?: string | null
+          difficulty?: string | null
+          id?: string
+          image_path?: string | null
+          material?: string | null
+          measurements?: Json | null
+          name: string
+          oem_code?: string | null
+          position?: string | null
+          side?: string | null
+          tools?: string[] | null
+          torque?: string | null
+          user_id: string
+          vehicle_context?: Json | null
+          weight?: string | null
+        }
+        Update: {
+          ai_confidence?: number | null
+          ai_raw?: Json | null
+          alt_codes?: string[] | null
+          avg_time?: string | null
+          compatible_vehicles?: Json | null
+          created_at?: string
+          description?: string | null
+          difficulty?: string | null
+          id?: string
+          image_path?: string | null
+          material?: string | null
+          measurements?: Json | null
+          name?: string
+          oem_code?: string | null
+          position?: string | null
+          side?: string | null
+          tools?: string[] | null
+          torque?: string | null
+          user_id?: string
+          vehicle_context?: Json | null
+          weight?: string | null
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          full_name: string | null
+          id: string
+          profile_type: Database["public"]["Enums"]["profile_type"]
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          full_name?: string | null
+          id: string
+          profile_type?: Database["public"]["Enums"]["profile_type"]
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          profile_type?: Database["public"]["Enums"]["profile_type"]
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      search_history: {
+        Row: {
+          created_at: string
+          id: string
+          kind: Database["public"]["Enums"]["search_kind"]
+          part_id: string | null
+          query: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind: Database["public"]["Enums"]["search_kind"]
+          part_id?: string | null
+          query?: Json
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: Database["public"]["Enums"]["search_kind"]
+          part_id?: string | null
+          query?: Json
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "search_history_part_id_fkey"
+            columns: ["part_id"]
+            isOneToOne: false
+            referencedRelation: "parts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vehicles: {
+        Row: {
+          brand: string
+          created_at: string
+          engine: string | null
+          id: string
+          model: string
+          nickname: string | null
+          user_id: string
+          version: string | null
+          vin: string | null
+          year: number | null
+        }
+        Insert: {
+          brand: string
+          created_at?: string
+          engine?: string | null
+          id?: string
+          model: string
+          nickname?: string | null
+          user_id: string
+          version?: string | null
+          vin?: string | null
+          year?: number | null
+        }
+        Update: {
+          brand?: string
+          created_at?: string
+          engine?: string | null
+          id?: string
+          model?: string
+          nickname?: string | null
+          user_id?: string
+          version?: string | null
+          vin?: string | null
+          year?: number | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +216,9 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      favorite_kind: "part" | "vehicle"
+      profile_type: "mechanic" | "parts_shop" | "dealership" | "consumer"
+      search_kind: "text" | "image"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +345,10 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      favorite_kind: ["part", "vehicle"],
+      profile_type: ["mechanic", "parts_shop", "dealership", "consumer"],
+      search_kind: ["text", "image"],
+    },
   },
 } as const
