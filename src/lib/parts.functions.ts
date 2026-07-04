@@ -290,7 +290,7 @@ Regras extras:
         tools: parsed.tools,
         avg_time: parsed.avg_time,
         compatible_vehicles: parsed.compatible_vehicles,
-        image_path: filename,
+        image_path: data.imagePath,
         ai_confidence: parsed.confidence,
         ai_raw: parsed,
         vehicle_context: ctx ?? null,
