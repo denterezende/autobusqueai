@@ -62,24 +62,43 @@ REGRAS ABSOLUTAS:
 
 // ---- Server fns --------------------------------------------------------
 
-export const identifyPart = createServerFn({ method: "POST" })
+function makeCallGateway(apiKey: string) {
+  return async (body: unknown) => {
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      if (res.status === 429) throw new Error("Limite de requisições da IA atingido. Tente novamente em instantes.");
+      if (res.status === 402) throw new Error("Créditos de IA esgotados. Adicione créditos no workspace.");
+      throw new Error(`Falha na IA (${res.status}): ${errText.slice(0, 200)}`);
+    }
+    return res.json();
+  };
+}
+
+function normalizeCodes(codes: string[]): string[] {
+  return Array.from(
+    new Set(
+      codes
+        .map((c) => c.trim().toUpperCase())
+        .filter((c) => c.length >= 3 && c.length <= 40 && /[A-Z0-9]/.test(c)),
+    ),
+  );
+}
+
+export const ocrPart = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
     z
       .object({
-        imageBase64: z.string().min(100), // data URL or raw base64
+        imageBase64: z.string().min(100),
         mimeType: z.string().default("image/jpeg"),
-        vehicleContext: z
-          .object({
-            brand: z.string().optional(),
-            model: z.string().optional(),
-            year: z.string().optional(),
-            version: z.string().optional(),
-            engine: z.string().optional(),
-            vin: z.string().optional(),
-          })
-          .partial()
-          .optional(),
       })
       .parse(input),
   )
@@ -88,37 +107,19 @@ export const identifyPart = createServerFn({ method: "POST" })
     const apiKey = process.env.LOVABLE_API_KEY;
     if (!apiKey) throw new Error("LOVABLE_API_KEY não configurada");
 
-    // 1. Upload image to storage
     const rawBase64 = data.imageBase64.includes(",")
       ? data.imageBase64.split(",")[1]
       : data.imageBase64;
     const bytes = Uint8Array.from(atob(rawBase64), (c) => c.charCodeAt(0));
     const ext = data.mimeType.split("/")[1] || "jpg";
-    const filename = `${userId}/${crypto.randomUUID()}.${ext}`;
+    const imagePath = `${userId}/${crypto.randomUUID()}.${ext}`;
     const { error: upErr } = await supabase.storage
       .from("part-images")
-      .upload(filename, bytes, { contentType: data.mimeType, upsert: false });
+      .upload(imagePath, bytes, { contentType: data.mimeType, upsert: false });
     if (upErr) throw new Error("Falha ao salvar imagem: " + upErr.message);
 
-    // 2. OCR pass — extract every visible alphanumeric code from the part photo
     const dataUrl = `data:${data.mimeType};base64,${rawBase64}`;
-    const callGateway = async (body: unknown) => {
-      const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        if (res.status === 429) throw new Error("Limite de requisições da IA atingido. Tente novamente em instantes.");
-        if (res.status === 402) throw new Error("Créditos de IA esgotados. Adicione créditos no workspace.");
-        throw new Error(`Falha na IA (${res.status}): ${errText.slice(0, 200)}`);
-      }
-      return res.json();
-    };
+    const callGateway = makeCallGateway(apiKey);
 
     const ocrJson = await callGateway({
       model: "google/gemini-3-flash-preview",
@@ -139,33 +140,75 @@ export const identifyPart = createServerFn({ method: "POST" })
       response_format: { type: "json_object" },
     });
 
-    let ocr: z.infer<typeof OcrOutput> = { codes: [], raw_text: "" };
+    let codes: string[] = [];
+    let rawText = "";
     try {
       const raw = ocrJson.choices?.[0]?.message?.content ?? "{}";
       const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
-      ocr = OcrOutput.parse(obj);
-      // Dedup + normalize (trim, uppercase)
-      ocr.codes = Array.from(
-        new Set(
-          ocr.codes
-            .map((c) => c.trim().toUpperCase())
-            .filter((c) => c.length >= 3 && c.length <= 40 && /[A-Z0-9]/.test(c)),
-        ),
-      );
+      const parsed = OcrOutput.parse(obj);
+      codes = normalizeCodes(parsed.codes);
+      rawText = parsed.raw_text ?? "";
     } catch (e) {
-      console.warn("OCR parse fail, prosseguindo sem OCR:", e);
+      console.warn("OCR parse fail:", e);
     }
 
-    // 3. Build vehicle context + OCR fragments
+    return { imagePath, mimeType: data.mimeType, codes, rawText };
+  });
+
+export const identifyPart = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        imagePath: z.string().min(1),
+        mimeType: z.string().default("image/jpeg"),
+        codes: z.array(z.string()).default([]),
+        vehicleContext: z
+          .object({
+            brand: z.string().optional(),
+            model: z.string().optional(),
+            year: z.string().optional(),
+            version: z.string().optional(),
+            engine: z.string().optional(),
+            vin: z.string().optional(),
+          })
+          .partial()
+          .optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const apiKey = process.env.LOVABLE_API_KEY;
+    if (!apiKey) throw new Error("LOVABLE_API_KEY não configurada");
+
+    // Ensure image belongs to this user (RLS also enforces via storage prefix)
+    if (!data.imagePath.startsWith(`${userId}/`)) {
+      throw new Error("Imagem inválida.");
+    }
+
+    // Download image from storage and reconstruct dataURL
+    const { data: blob, error: dlErr } = await supabase.storage
+      .from("part-images")
+      .download(data.imagePath);
+    if (dlErr || !blob) throw new Error("Falha ao ler imagem: " + (dlErr?.message ?? ""));
+    const arrBuf = await blob.arrayBuffer();
+    let binary = "";
+    const bytes = new Uint8Array(arrBuf);
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const rawBase64 = btoa(binary);
+    const dataUrl = `data:${data.mimeType};base64,${rawBase64}`;
+
+    const reviewedCodes = normalizeCodes(data.codes);
     const ctx = data.vehicleContext;
     const ctxLine =
       ctx && Object.values(ctx).some(Boolean)
         ? `Contexto do veículo informado pelo usuário: ${JSON.stringify(ctx)}`
         : "Nenhum contexto de veículo foi informado.";
     const ocrLine =
-      ocr.codes.length > 0
-        ? `Códigos lidos por OCR diretamente na peça (use-os para refinar oem_code e alt_codes, priorizando estes valores; NÃO os descarte): ${JSON.stringify(ocr.codes)}`
-        : "Nenhum código foi lido por OCR na peça.";
+      reviewedCodes.length > 0
+        ? `Códigos revisados pelo usuário (OCR + correções manuais). Use-os como fonte prioritária de oem_code e alt_codes; NÃO os descarte: ${JSON.stringify(reviewedCodes)}`
+        : "Nenhum código foi fornecido pelo usuário.";
 
     const userText = `${ctxLine}
 ${ocrLine}
@@ -192,11 +235,11 @@ Analise a foto anexada e identifique a peça automotiva. Retorne APENAS um JSON 
 }
 
 Regras extras:
-- Sempre inclua em "ocr_codes" a lista de códigos OCR informados acima (repita-os fielmente).
-- Se houver códigos OCR, "oem_code" deve preferencialmente ser um deles (aquele que você reconhece como o part number principal). Os demais códigos OCR relevantes vão em "alt_codes".
+- Sempre inclua em "ocr_codes" a lista de códigos revisados informados acima (repita-os fielmente).
+- Se houver códigos revisados, "oem_code" deve preferencialmente ser um deles (aquele que você reconhece como o part number principal). Os demais códigos vão em "alt_codes".
 - Campos desconhecidos DEVEM ser null, "${NOT_FOUND}", ou array vazio — nunca inventados.`;
 
-    // 4. Identification pass
+    const callGateway = makeCallGateway(apiKey);
     const aiJson = await callGateway({
       model: "google/gemini-3-flash-preview",
       messages: [
@@ -222,16 +265,13 @@ Regras extras:
       throw new Error("A IA retornou um formato inesperado. Tente uma foto mais clara.");
     }
 
-    // Garantir que os códigos OCR sempre aparecem
-    if (ocr.codes.length > 0) {
-      parsed.ocr_codes = Array.from(new Set([...(parsed.ocr_codes ?? []), ...ocr.codes]));
-      const allAlt = new Set([...(parsed.alt_codes ?? []), ...ocr.codes]);
+    if (reviewedCodes.length > 0) {
+      parsed.ocr_codes = Array.from(new Set([...(parsed.ocr_codes ?? []), ...reviewedCodes]));
+      const allAlt = new Set([...(parsed.alt_codes ?? []), ...reviewedCodes]);
       if (parsed.oem_code) allAlt.delete(parsed.oem_code.toUpperCase());
       parsed.alt_codes = Array.from(allAlt);
     }
 
-
-    // 4. Persist part row
     const { data: partRow, error: insErr } = await supabase
       .from("parts")
       .insert({
@@ -250,7 +290,7 @@ Regras extras:
         tools: parsed.tools,
         avg_time: parsed.avg_time,
         compatible_vehicles: parsed.compatible_vehicles,
-        image_path: filename,
+        image_path: data.imagePath,
         ai_confidence: parsed.confidence,
         ai_raw: parsed,
         vehicle_context: ctx ?? null,
