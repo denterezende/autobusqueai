@@ -2,8 +2,8 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation } from "@tanstack/react-query";
-import { identifyPart, searchTextHistory } from "@/lib/parts.functions";
-import { Camera, Upload, Search, Loader2, Scan, ChevronRight, Sparkles } from "lucide-react";
+import { identifyPart, ocrPart, searchTextHistory } from "@/lib/parts.functions";
+import { Camera, Upload, Search, Loader2, Scan, ChevronRight, Sparkles, X, Plus, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/app")({
@@ -15,6 +15,12 @@ const POPULAR_BRANDS = [
   "Honda", "Hyundai", "Renault", "Jeep", "Nissan",
 ];
 
+type OcrResult = { imagePath: string; mimeType: string; codes: string[]; rawText: string };
+
+function normalizeCode(v: string): string {
+  return v.trim().toUpperCase().replace(/[^A-Z0-9./-]/g, "").slice(0, 40);
+}
+
 function AppHome() {
   const navigate = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -23,19 +29,37 @@ function AppHome() {
   const [showFilters, setShowFilters] = useState(false);
   const [searchQ, setSearchQ] = useState("");
   const [searchOem, setSearchOem] = useState("");
+  const [ocrResult, setOcrResult] = useState<OcrResult | null>(null);
+  const [editableCodes, setEditableCodes] = useState<string[]>([]);
+  const [newCode, setNewCode] = useState("");
+  const [showRaw, setShowRaw] = useState(false);
 
+  const ocrFn = useServerFn(ocrPart);
   const identifyFn = useServerFn(identifyPart);
   const searchFn = useServerFn(searchTextHistory);
 
-  const identifyMut = useMutation({
+  const ocrMut = useMutation({
     mutationFn: async (payload: { imageBase64: string; mimeType: string }) =>
-      identifyFn({
+      ocrFn({ data: payload }),
+    onSuccess: (res) => {
+      setOcrResult(res);
+      setEditableCodes(res.codes);
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const identifyMut = useMutation({
+    mutationFn: async () => {
+      if (!ocrResult) throw new Error("Faça upload da foto primeiro.");
+      return identifyFn({
         data: {
-          imageBase64: payload.imageBase64,
-          mimeType: payload.mimeType,
+          imagePath: ocrResult.imagePath,
+          mimeType: ocrResult.mimeType,
+          codes: editableCodes,
           vehicleContext: Object.fromEntries(Object.entries(ctx).filter(([, v]) => v)) as Record<string, string>,
         },
-      }),
+      });
+    },
     onSuccess: (res) => {
       navigate({ to: "/_authenticated/result/$id", params: { id: res.id } });
     },
@@ -63,10 +87,47 @@ function AppHome() {
     reader.onload = () => {
       const dataUrl = reader.result as string;
       setPreview(dataUrl);
-      identifyMut.mutate({ imageBase64: dataUrl, mimeType: file.type || "image/jpeg" });
+      setOcrResult(null);
+      setEditableCodes([]);
+      ocrMut.mutate({ imageBase64: dataUrl, mimeType: file.type || "image/jpeg" });
     };
     reader.readAsDataURL(file);
   };
+
+  const resetFlow = () => {
+    setPreview(null);
+    setOcrResult(null);
+    setEditableCodes([]);
+    setNewCode("");
+    ocrMut.reset();
+    identifyMut.reset();
+  };
+
+  const updateCode = (i: number, v: string) => {
+    setEditableCodes((prev) => prev.map((c, idx) => (idx === i ? v.toUpperCase() : c)));
+  };
+  const removeCode = (i: number) => {
+    setEditableCodes((prev) => prev.filter((_, idx) => idx !== i));
+  };
+  const addCode = () => {
+    const n = normalizeCode(newCode);
+    if (n.length < 3) {
+      toast.error("Código muito curto.");
+      return;
+    }
+    if (editableCodes.some((c) => c.toUpperCase() === n)) {
+      toast.info("Código já está na lista.");
+      return;
+    }
+    setEditableCodes((prev) => [...prev, n]);
+    setNewCode("");
+  };
+
+  const step: "upload" | "review" | "loading" = identifyMut.isPending
+    ? "loading"
+    : ocrResult
+      ? "review"
+      : "upload";
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:py-10">
@@ -86,25 +147,142 @@ function AppHome() {
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
             <span className="font-mono text-xs uppercase tracking-widest font-semibold">
-              Identificar peça por foto
+              {step === "review" ? "Revisar códigos OCR" : "Identificar peça por foto"}
             </span>
           </div>
           <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-            Powered by AI Vision
+            {step === "review" ? "Etapa 2 de 2" : "Etapa 1 de 2"}
           </span>
         </div>
 
         <div className="grid md:grid-cols-[1fr_320px]">
           <div className="p-5">
-            {identifyMut.isPending ? (
+            {step === "loading" ? (
               <div className="flex min-h-[240px] flex-col items-center justify-center gap-4 rounded-md border border-dashed border-primary/50 bg-primary/5">
                 <Loader2 className="h-10 w-10 animate-spin text-primary" />
                 <div className="text-center">
                   <div className="font-mono text-sm uppercase tracking-wider text-primary">
-                    Analisando imagem…
+                    Identificando peça…
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
-                    A IA está comparando com catálogos e identificando a peça.
+                    A IA está cruzando os códigos revisados com catálogos.
+                  </div>
+                </div>
+                {preview && (
+                  <img src={preview} alt="preview" className="h-24 w-24 rounded-md object-cover ring-2 ring-primary/30" />
+                )}
+              </div>
+            ) : step === "review" && ocrResult ? (
+              <div className="space-y-4">
+                <div className="flex gap-4">
+                  {preview && (
+                    <img
+                      src={preview}
+                      alt="peça"
+                      className="h-32 w-32 flex-shrink-0 rounded-md object-cover ring-1 ring-border"
+                    />
+                  )}
+                  <div className="flex-1 text-sm">
+                    <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                      OCR encontrou {ocrResult.codes.length} código(s)
+                    </div>
+                    <p className="mt-1 text-muted-foreground">
+                      Revise, corrija ou adicione códigos OEM / alternativos antes de rodar a
+                      identificação. Você pode remover falsos positivos e digitar códigos que
+                      o OCR não pegou.
+                    </p>
+                    {ocrResult.rawText && (
+                      <button
+                        onClick={() => setShowRaw((s) => !s)}
+                        className="mt-2 text-[11px] text-primary hover:underline"
+                      >
+                        {showRaw ? "Ocultar" : "Ver"} texto bruto do OCR
+                      </button>
+                    )}
+                    {showRaw && ocrResult.rawText && (
+                      <pre className="mt-2 max-h-32 overflow-auto rounded-md border border-border bg-background p-2 font-mono text-[10px] text-muted-foreground whitespace-pre-wrap">
+                        {ocrResult.rawText}
+                      </pre>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground mb-2">
+                    Códigos revisados
+                  </div>
+                  {editableCodes.length === 0 && (
+                    <div className="mb-2 text-xs text-muted-foreground italic">
+                      Nenhum código. Você pode adicionar manualmente abaixo ou prosseguir sem códigos.
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    {editableCodes.map((code, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <input
+                          value={code}
+                          onChange={(e) => updateCode(i, e.target.value)}
+                          className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono uppercase"
+                        />
+                        <button
+                          onClick={() => removeCode(i)}
+                          className="rounded-md border border-border p-1.5 text-muted-foreground hover:border-destructive hover:text-destructive"
+                          aria-label="Remover código"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <input
+                      value={newCode}
+                      onChange={(e) => setNewCode(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addCode();
+                        }
+                      }}
+                      placeholder="Adicionar código manualmente"
+                      className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono uppercase"
+                    />
+                    <button
+                      onClick={addCode}
+                      className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Adicionar
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <button
+                    onClick={resetFlow}
+                    className="inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-secondary"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Trocar foto
+                  </button>
+                  <button
+                    onClick={() => identifyMut.mutate()}
+                    className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    Identificar peça
+                  </button>
+                </div>
+              </div>
+            ) : ocrMut.isPending ? (
+              <div className="flex min-h-[240px] flex-col items-center justify-center gap-4 rounded-md border border-dashed border-primary/50 bg-primary/5">
+                <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                <div className="text-center">
+                  <div className="font-mono text-sm uppercase tracking-wider text-primary">
+                    Lendo códigos na peça…
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    OCR extraindo OEM, part numbers e códigos alternativos.
                   </div>
                 </div>
                 {preview && (
