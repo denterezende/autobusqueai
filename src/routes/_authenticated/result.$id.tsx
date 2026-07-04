@@ -56,6 +56,7 @@ function ResultPage() {
   const measurements = (part.measurements as Record<string, string | null> | null) ?? {};
   const tools = (part.tools as string[] | null) ?? [];
   const altCodes = (part.alt_codes as string[] | null) ?? [];
+  const ocrCodes = ((part.ai_raw as { ocr_codes?: string[] } | null)?.ocr_codes ?? []) as string[];
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:py-10">
@@ -159,6 +160,23 @@ function ResultPage() {
                 )}
               </DataRow>
             </div>
+            <DataRow label="Códigos lidos por OCR na peça" className="mt-4">
+              {ocrCodes.length ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {ocrCodes.map((c, i) => (
+                    <code
+                      key={i}
+                      className="rounded-sm border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-xs text-primary"
+                      title="Lido diretamente da foto"
+                    >
+                      {c}
+                    </code>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-sm text-muted-foreground">Nenhum código legível na foto</span>
+              )}
+            </DataRow>
           </div>
 
           {/* Especificações */}

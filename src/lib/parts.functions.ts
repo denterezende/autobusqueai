@@ -37,6 +37,12 @@ export const IdentifyOutput = z.object({
   compatible_vehicles: z.array(CompatibleVehicle).default([]),
   confidence: z.number().min(0).max(1),
   notes: z.string().optional().nullable(),
+  ocr_codes: z.array(z.string()).default([]),
+});
+
+const OcrOutput = z.object({
+  codes: z.array(z.string()).default([]),
+  raw_text: z.string().optional().nullable(),
 });
 
 export type IdentifyOutputT = z.infer<typeof IdentifyOutput>;
@@ -94,14 +100,75 @@ export const identifyPart = createServerFn({ method: "POST" })
       .upload(filename, bytes, { contentType: data.mimeType, upsert: false });
     if (upErr) throw new Error("Falha ao salvar imagem: " + upErr.message);
 
-    // 2. Build vehicle context prompt fragment
+    // 2. OCR pass — extract every visible alphanumeric code from the part photo
+    const dataUrl = `data:${data.mimeType};base64,${rawBase64}`;
+    const callGateway = async (body: unknown) => {
+      const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        if (res.status === 429) throw new Error("Limite de requisições da IA atingido. Tente novamente em instantes.");
+        if (res.status === 402) throw new Error("Créditos de IA esgotados. Adicione créditos no workspace.");
+        throw new Error(`Falha na IA (${res.status}): ${errText.slice(0, 200)}`);
+      }
+      return res.json();
+    };
+
+    const ocrJson = await callGateway({
+      model: "google/gemini-3-flash-preview",
+      messages: [
+        {
+          role: "system",
+          content:
+            'Você é um OCR especializado em peças automotivas. Leia toda e qualquer inscrição visível na peça (códigos gravados, estampados, etiquetas, part numbers, códigos de barras). Devolva SOMENTE JSON no formato {"codes": string[], "raw_text": string}. "codes" deve conter apenas strings alfanuméricas (aceite hífens, pontos e barras) que pareçam códigos/part numbers — nada de palavras comuns. Se não houver nada legível, retorne {"codes": [], "raw_text": ""}. Não invente nada.',
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Extraia todos os códigos e textos visíveis nesta peça." },
+            { type: "image_url", image_url: { url: dataUrl } },
+          ],
+        },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    let ocr: z.infer<typeof OcrOutput> = { codes: [], raw_text: "" };
+    try {
+      const raw = ocrJson.choices?.[0]?.message?.content ?? "{}";
+      const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+      ocr = OcrOutput.parse(obj);
+      // Dedup + normalize (trim, uppercase)
+      ocr.codes = Array.from(
+        new Set(
+          ocr.codes
+            .map((c) => c.trim().toUpperCase())
+            .filter((c) => c.length >= 3 && c.length <= 40 && /[A-Z0-9]/.test(c)),
+        ),
+      );
+    } catch (e) {
+      console.warn("OCR parse fail, prosseguindo sem OCR:", e);
+    }
+
+    // 3. Build vehicle context + OCR fragments
     const ctx = data.vehicleContext;
     const ctxLine =
       ctx && Object.values(ctx).some(Boolean)
         ? `Contexto do veículo informado pelo usuário: ${JSON.stringify(ctx)}`
         : "Nenhum contexto de veículo foi informado.";
+    const ocrLine =
+      ocr.codes.length > 0
+        ? `Códigos lidos por OCR diretamente na peça (use-os para refinar oem_code e alt_codes, priorizando estes valores; NÃO os descarte): ${JSON.stringify(ocr.codes)}`
+        : "Nenhum código foi lido por OCR na peça.";
 
     const userText = `${ctxLine}
+${ocrLine}
 
 Analise a foto anexada e identifique a peça automotiva. Retorne APENAS um JSON válido no formato:
 {
@@ -120,49 +187,31 @@ Analise a foto anexada e identifique a peça automotiva. Retorne APENAS um JSON 
   "avg_time": string | null,
   "compatible_vehicles": [{ "brand": string, "model": string, "years": string | null }],
   "confidence": number (0..1),
-  "notes": string | null
+  "notes": string | null,
+  "ocr_codes": string[]
 }
 
-Lembre: campos desconhecidos DEVEM ser null, string vazia "${NOT_FOUND}", ou array vazio — nunca inventados.`;
+Regras extras:
+- Sempre inclua em "ocr_codes" a lista de códigos OCR informados acima (repita-os fielmente).
+- Se houver códigos OCR, "oem_code" deve preferencialmente ser um deles (aquele que você reconhece como o part number principal). Os demais códigos OCR relevantes vão em "alt_codes".
+- Campos desconhecidos DEVEM ser null, "${NOT_FOUND}", ou array vazio — nunca inventados.`;
 
-    // 3. Call Lovable AI Gateway (chat completions, multimodal)
-    const gatewayRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: userText },
-              {
-                type: "image_url",
-                image_url: { url: `data:${data.mimeType};base64,${rawBase64}` },
-              },
-            ],
-          },
-        ],
-        response_format: { type: "json_object" },
-      }),
+    // 4. Identification pass
+    const aiJson = await callGateway({
+      model: "google/gemini-3-flash-preview",
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: userText },
+            { type: "image_url", image_url: { url: dataUrl } },
+          ],
+        },
+      ],
+      response_format: { type: "json_object" },
     });
 
-    if (!gatewayRes.ok) {
-      const errText = await gatewayRes.text();
-      if (gatewayRes.status === 429) {
-        throw new Error("Limite de requisições da IA atingido. Tente novamente em instantes.");
-      }
-      if (gatewayRes.status === 402) {
-        throw new Error("Créditos de IA esgotados. Adicione créditos no workspace.");
-      }
-      throw new Error(`Falha na IA (${gatewayRes.status}): ${errText.slice(0, 200)}`);
-    }
-
-    const aiJson = await gatewayRes.json();
     const rawContent = aiJson.choices?.[0]?.message?.content ?? "{}";
     let parsed: IdentifyOutputT;
     try {
@@ -172,6 +221,15 @@ Lembre: campos desconhecidos DEVEM ser null, string vazia "${NOT_FOUND}", ou arr
       console.error("AI parse fail:", e, rawContent);
       throw new Error("A IA retornou um formato inesperado. Tente uma foto mais clara.");
     }
+
+    // Garantir que os códigos OCR sempre aparecem
+    if (ocr.codes.length > 0) {
+      parsed.ocr_codes = Array.from(new Set([...(parsed.ocr_codes ?? []), ...ocr.codes]));
+      const allAlt = new Set([...(parsed.alt_codes ?? []), ...ocr.codes]);
+      if (parsed.oem_code) allAlt.delete(parsed.oem_code.toUpperCase());
+      parsed.alt_codes = Array.from(allAlt);
+    }
+
 
     // 4. Persist part row
     const { data: partRow, error: insErr } = await supabase
