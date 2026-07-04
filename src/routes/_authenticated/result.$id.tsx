@@ -56,6 +56,7 @@ function ResultPage() {
   const measurements = (part.measurements as Record<string, string | null> | null) ?? {};
   const tools = (part.tools as string[] | null) ?? [];
   const altCodes = (part.alt_codes as string[] | null) ?? [];
+  const ocrCodes = ((part.ai_raw as { ocr_codes?: string[] } | null)?.ocr_codes ?? []) as string[];
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:py-10">
