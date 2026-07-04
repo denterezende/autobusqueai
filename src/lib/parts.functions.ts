@@ -37,6 +37,12 @@ export const IdentifyOutput = z.object({
   compatible_vehicles: z.array(CompatibleVehicle).default([]),
   confidence: z.number().min(0).max(1),
   notes: z.string().optional().nullable(),
+  ocr_codes: z.array(z.string()).default([]),
+});
+
+const OcrOutput = z.object({
+  codes: z.array(z.string()).default([]),
+  raw_text: z.string().optional().nullable(),
 });
 
 export type IdentifyOutputT = z.infer<typeof IdentifyOutput>;
