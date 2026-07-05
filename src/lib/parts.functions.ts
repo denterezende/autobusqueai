@@ -536,7 +536,12 @@ export const getIntegrationHealth = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const started = Date.now();
     const checks: {
-      gateway: { ok: boolean; latencyMs: number | null; detail: string };
+      gateway: {
+        ok: boolean;
+        latencyMs: number | null;
+        detail: string;
+        errorCode?: GatewayError["code"];
+      };
       storage: { ok: boolean; latencyMs: number | null; detail: string };
       apiKey: { ok: boolean; detail: string };
     } = {
@@ -553,25 +558,26 @@ export const getIntegrationHealth = createServerFn({ method: "GET" })
     if (apiKey) {
       const t0 = Date.now();
       try {
-        const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({
-            model: "google/gemini-3-flash-preview",
-            messages: [{ role: "user", content: "ping" }],
-            max_tokens: 1,
-          }),
+        const callGateway = makeCallGateway(apiKey);
+        await callGateway({
+          model: "google/gemini-3-flash-preview",
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1,
         });
         checks.gateway.latencyMs = Date.now() - t0;
-        checks.gateway.ok = res.ok;
-        checks.gateway.detail = res.ok
-          ? `HTTP ${res.status} · gemini-3-flash-preview`
-          : `HTTP ${res.status} · ${(await res.text()).slice(0, 120)}`;
+        checks.gateway.ok = true;
+        checks.gateway.detail = "Gateway respondendo · gemini-3-flash-preview";
       } catch (e) {
         checks.gateway.latencyMs = Date.now() - t0;
-        checks.gateway.detail = e instanceof Error ? e.message : "Erro desconhecido";
+        if (e instanceof GatewayError) {
+          checks.gateway.errorCode = e.code;
+          checks.gateway.detail = e.message;
+        } else {
+          checks.gateway.detail = e instanceof Error ? e.message : "Erro desconhecido";
+        }
       }
     } else {
+      checks.gateway.errorCode = "AUTH_MISSING";
       checks.gateway.detail = "Sem API key para testar";
     }
 
