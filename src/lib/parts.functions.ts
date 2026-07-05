@@ -62,21 +62,91 @@ REGRAS ABSOLUTAS:
 
 // ---- Server fns --------------------------------------------------------
 
+export class GatewayError extends Error {
+  code:
+    | "AUTH_INVALID"
+    | "AUTH_EXPIRED"
+    | "AUTH_MISSING"
+    | "RATE_LIMITED"
+    | "CREDITS"
+    | "BAD_REQUEST"
+    | "UPSTREAM"
+    | "NETWORK";
+  status: number | null;
+  detail?: string;
+  constructor(
+    code: GatewayError["code"],
+    message: string,
+    status: number | null = null,
+    detail?: string,
+  ) {
+    super(`[${code}] ${message}`);
+    this.name = "GatewayError";
+    this.code = code;
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 function makeCallGateway(apiKey: string) {
   return async (body: unknown) => {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      throw new GatewayError(
+        "NETWORK",
+        "Falha de rede ao contatar a IA. Verifique sua conexão e tente novamente.",
+        null,
+        e instanceof Error ? e.message : String(e),
+      );
+    }
     if (!res.ok) {
-      const errText = await res.text();
-      if (res.status === 429) throw new Error("Limite de requisições da IA atingido. Tente novamente em instantes.");
-      if (res.status === 402) throw new Error("Créditos de IA esgotados. Adicione créditos no workspace.");
-      throw new Error(`Falha na IA (${res.status}): ${errText.slice(0, 200)}`);
+      const errText = (await res.text().catch(() => "")).slice(0, 300);
+      const lower = errText.toLowerCase();
+      if (res.status === 401) {
+        const expired = lower.includes("expired") || lower.includes("expirad");
+        throw new GatewayError(
+          expired ? "AUTH_EXPIRED" : "AUTH_INVALID",
+          expired
+            ? "Sessão da IA expirada. A chave de acesso precisa ser renovada."
+            : "Chave de acesso da IA inválida. Renove a integração para continuar.",
+          401,
+          errText,
+        );
+      }
+      if (res.status === 403) {
+        throw new GatewayError(
+          "AUTH_INVALID",
+          "Acesso à IA negado. Verifique se a chave de integração é válida para este projeto.",
+          403,
+          errText,
+        );
+      }
+      if (res.status === 429)
+        throw new GatewayError(
+          "RATE_LIMITED",
+          "Limite de requisições da IA atingido. Tente novamente em instantes.",
+          429,
+          errText,
+        );
+      if (res.status === 402)
+        throw new GatewayError(
+          "CREDITS",
+          "Créditos de IA esgotados. Adicione créditos ao workspace para continuar.",
+          402,
+          errText,
+        );
+      if (res.status >= 400 && res.status < 500)
+        throw new GatewayError("BAD_REQUEST", `Requisição rejeitada pela IA (${res.status}).`, res.status, errText);
+      throw new GatewayError("UPSTREAM", `Falha temporária da IA (${res.status}). Tente novamente.`, res.status, errText);
     }
     return res.json();
   };
