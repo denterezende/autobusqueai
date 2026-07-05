@@ -28,7 +28,7 @@ function FavoritesPage() {
         <div className="panel rounded-lg p-10 text-center">
           <Star className="mx-auto h-8 w-8 text-muted-foreground" />
           <p className="mt-3 text-sm text-muted-foreground">Nenhum favorito salvo.</p>
-          <Link to="/_authenticated/app" className="mt-4 inline-block text-primary hover:underline text-sm">
+          <Link to="/app" className="mt-4 inline-block text-primary hover:underline text-sm">
             Escanear uma peça →
           </Link>
         </div>
@@ -42,7 +42,7 @@ function FavoritesPage() {
           return (
             <Link
               key={f.id}
-              to="/_authenticated/result/$id"
+              to="/result/$id"
               params={{ id: part.id }}
               className="flex items-center justify-between gap-3 rounded-md border border-border bg-panel px-4 py-3 hover:border-primary/50 transition"
             >

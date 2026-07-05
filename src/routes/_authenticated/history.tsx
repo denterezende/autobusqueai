@@ -28,7 +28,7 @@ function HistoryPage() {
         <div className="panel rounded-lg p-10 text-center">
           <History className="mx-auto h-8 w-8 text-muted-foreground" />
           <p className="mt-3 text-sm text-muted-foreground">Nenhuma consulta ainda.</p>
-          <Link to="/_authenticated/app" className="mt-4 inline-block text-primary hover:underline text-sm">
+          <Link to="/app" className="mt-4 inline-block text-primary hover:underline text-sm">
             Fazer primeira busca →
           </Link>
         </div>

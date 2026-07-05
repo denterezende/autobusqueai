@@ -28,7 +28,7 @@ function AuthedLayout() {
     <div className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4">
-          <Link to="/_authenticated/app" className="flex items-center gap-2">
+          <Link to="/app" className="flex items-center gap-2">
             <div className="grid h-7 w-7 place-items-center rounded-sm bg-primary text-primary-foreground">
               <Scan className="h-4 w-4" strokeWidth={2.5} />
             </div>
@@ -38,10 +38,10 @@ function AuthedLayout() {
           </Link>
 
           <nav className="hidden md:flex items-center gap-1 text-sm">
-            <NavLink to="/_authenticated/app" icon={<Scan className="h-4 w-4" />} label="Identificar" />
-            <NavLink to="/_authenticated/history" icon={<History className="h-4 w-4" />} label="Histórico" />
-            <NavLink to="/_authenticated/favorites" icon={<Star className="h-4 w-4" />} label="Favoritos" />
-            <NavLink to="/_authenticated/settings" icon={<Settings className="h-4 w-4" />} label="Perfil" />
+            <NavLink to="/app" icon={<Scan className="h-4 w-4" />} label="Identificar" />
+            <NavLink to="/history" icon={<History className="h-4 w-4" />} label="Histórico" />
+            <NavLink to="/favorites" icon={<Star className="h-4 w-4" />} label="Favoritos" />
+            <NavLink to="/settings" icon={<Settings className="h-4 w-4" />} label="Perfil" />
           </nav>
 
           <div className="ml-auto">
@@ -55,10 +55,10 @@ function AuthedLayout() {
           </div>
         </div>
         <nav className="flex md:hidden border-t border-border">
-          <MobileNav to="/_authenticated/app" icon={<Scan className="h-4 w-4" />} label="IA" />
-          <MobileNav to="/_authenticated/history" icon={<History className="h-4 w-4" />} label="Histórico" />
-          <MobileNav to="/_authenticated/favorites" icon={<Star className="h-4 w-4" />} label="Favoritos" />
-          <MobileNav to="/_authenticated/settings" icon={<Settings className="h-4 w-4" />} label="Perfil" />
+          <MobileNav to="/app" icon={<Scan className="h-4 w-4" />} label="IA" />
+          <MobileNav to="/history" icon={<History className="h-4 w-4" />} label="Histórico" />
+          <MobileNav to="/favorites" icon={<Star className="h-4 w-4" />} label="Favoritos" />
+          <MobileNav to="/settings" icon={<Settings className="h-4 w-4" />} label="Perfil" />
         </nav>
       </header>
       <main>
