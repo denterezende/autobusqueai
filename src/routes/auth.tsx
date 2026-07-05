@@ -31,7 +31,7 @@ function AuthPage() {
   // Redirect if already signed in
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) navigate({ to: "/_authenticated/app", replace: true });
+      if (data.session) navigate({ to: "/app", replace: true });
     });
   }, [navigate]);
 
@@ -50,11 +50,11 @@ function AuthPage() {
         });
         if (error) throw error;
         toast.success("Conta criada! Redirecionando…");
-        navigate({ to: "/_authenticated/app", replace: true });
+        navigate({ to: "/app", replace: true });
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        navigate({ to: "/_authenticated/app", replace: true });
+        navigate({ to: "/app", replace: true });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro inesperado";
@@ -75,7 +75,7 @@ function AuthPage() {
         return;
       }
       if (result.redirected) return;
-      navigate({ to: "/_authenticated/app", replace: true });
+      navigate({ to: "/app", replace: true });
     } finally {
       setLoading(false);
     }

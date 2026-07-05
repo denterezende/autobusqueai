@@ -61,7 +61,7 @@ function AppHome() {
       });
     },
     onSuccess: (res) => {
-      navigate({ to: "/_authenticated/result/$id", params: { id: res.id } });
+      navigate({ to: "/result/$id", params: { id: res.id } });
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -414,7 +414,7 @@ function AppHome() {
             {searchMut.data.results.map((r) => (
               <button
                 key={r.id}
-                onClick={() => navigate({ to: "/_authenticated/result/$id", params: { id: r.id } })}
+                onClick={() => navigate({ to: "/result/$id", params: { id: r.id } })}
                 className="flex w-full items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-left hover:border-primary/50"
               >
                 <div>

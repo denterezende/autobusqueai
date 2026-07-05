@@ -28,7 +28,7 @@ function HistoryPage() {
         <div className="panel rounded-lg p-10 text-center">
           <History className="mx-auto h-8 w-8 text-muted-foreground" />
           <p className="mt-3 text-sm text-muted-foreground">Nenhuma consulta ainda.</p>
-          <Link to="/_authenticated/app" className="mt-4 inline-block text-primary hover:underline text-sm">
+          <Link to="/app" className="mt-4 inline-block text-primary hover:underline text-sm">
             Fazer primeira busca →
           </Link>
         </div>
@@ -41,7 +41,7 @@ function HistoryPage() {
           return (
             <Link
               key={h.id}
-              to={part ? "/_authenticated/result/$id" : "/_authenticated/app"}
+              to={part ? "/result/$id" : "/app"}
               params={part ? { id: part.id } : undefined}
               className="flex items-center gap-3 rounded-md border border-border bg-panel px-4 py-3 hover:border-primary/50 transition"
             >

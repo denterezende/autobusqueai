@@ -43,7 +43,7 @@ function ResultPage() {
     return (
       <div className="mx-auto max-w-4xl px-4 py-10 text-center">
         <p className="text-muted-foreground">Peça não encontrada.</p>
-        <Link to="/_authenticated/app" className="mt-4 inline-block text-primary hover:underline">
+        <Link to="/app" className="mt-4 inline-block text-primary hover:underline">
           ← Voltar
         </Link>
       </div>
@@ -62,7 +62,7 @@ function ResultPage() {
     <div className="mx-auto max-w-6xl px-4 py-6 md:py-10">
       <div className="mb-6 flex items-center justify-between">
         <button
-          onClick={() => navigate({ to: "/_authenticated/app" })}
+          onClick={() => navigate({ to: "/app" })}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
