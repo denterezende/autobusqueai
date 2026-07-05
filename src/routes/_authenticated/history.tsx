@@ -41,7 +41,7 @@ function HistoryPage() {
           return (
             <Link
               key={h.id}
-              to={part ? "/_authenticated/result/$id" : "/_authenticated/app"}
+              to={part ? "/result/$id" : "/app"}
               params={part ? { id: part.id } : undefined}
               className="flex items-center gap-3 rounded-md border border-border bg-panel px-4 py-3 hover:border-primary/50 transition"
             >
