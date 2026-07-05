@@ -42,7 +42,7 @@ function SettingsPage() {
       toast.success("Perfil atualizado");
       qc.invalidateQueries({ queryKey: ["profile"] });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toastIntegrationError(err),
   });
 
   return (
