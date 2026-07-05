@@ -5,6 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 import { identifyPart, ocrPart, searchTextHistory } from "@/lib/parts.functions";
 import { Camera, Upload, Search, Loader2, Scan, ChevronRight, Sparkles, X, Plus, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
+import { toastIntegrationError } from "@/lib/integration-errors";
 
 export const Route = createFileRoute("/_authenticated/app")({
   component: AppHome,
