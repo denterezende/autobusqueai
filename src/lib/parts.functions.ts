@@ -62,21 +62,91 @@ REGRAS ABSOLUTAS:
 
 // ---- Server fns --------------------------------------------------------
 
+export class GatewayError extends Error {
+  code:
+    | "AUTH_INVALID"
+    | "AUTH_EXPIRED"
+    | "AUTH_MISSING"
+    | "RATE_LIMITED"
+    | "CREDITS"
+    | "BAD_REQUEST"
+    | "UPSTREAM"
+    | "NETWORK";
+  status: number | null;
+  detail?: string;
+  constructor(
+    code: GatewayError["code"],
+    message: string,
+    status: number | null = null,
+    detail?: string,
+  ) {
+    super(`[${code}] ${message}`);
+    this.name = "GatewayError";
+    this.code = code;
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 function makeCallGateway(apiKey: string) {
   return async (body: unknown) => {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      throw new GatewayError(
+        "NETWORK",
+        "Falha de rede ao contatar a IA. Verifique sua conexão e tente novamente.",
+        null,
+        e instanceof Error ? e.message : String(e),
+      );
+    }
     if (!res.ok) {
-      const errText = await res.text();
-      if (res.status === 429) throw new Error("Limite de requisições da IA atingido. Tente novamente em instantes.");
-      if (res.status === 402) throw new Error("Créditos de IA esgotados. Adicione créditos no workspace.");
-      throw new Error(`Falha na IA (${res.status}): ${errText.slice(0, 200)}`);
+      const errText = (await res.text().catch(() => "")).slice(0, 300);
+      const lower = errText.toLowerCase();
+      if (res.status === 401) {
+        const expired = lower.includes("expired") || lower.includes("expirad");
+        throw new GatewayError(
+          expired ? "AUTH_EXPIRED" : "AUTH_INVALID",
+          expired
+            ? "Sessão da IA expirada. A chave de acesso precisa ser renovada."
+            : "Chave de acesso da IA inválida. Renove a integração para continuar.",
+          401,
+          errText,
+        );
+      }
+      if (res.status === 403) {
+        throw new GatewayError(
+          "AUTH_INVALID",
+          "Acesso à IA negado. Verifique se a chave de integração é válida para este projeto.",
+          403,
+          errText,
+        );
+      }
+      if (res.status === 429)
+        throw new GatewayError(
+          "RATE_LIMITED",
+          "Limite de requisições da IA atingido. Tente novamente em instantes.",
+          429,
+          errText,
+        );
+      if (res.status === 402)
+        throw new GatewayError(
+          "CREDITS",
+          "Créditos de IA esgotados. Adicione créditos ao workspace para continuar.",
+          402,
+          errText,
+        );
+      if (res.status >= 400 && res.status < 500)
+        throw new GatewayError("BAD_REQUEST", `Requisição rejeitada pela IA (${res.status}).`, res.status, errText);
+      throw new GatewayError("UPSTREAM", `Falha temporária da IA (${res.status}). Tente novamente.`, res.status, errText);
     }
     return res.json();
   };
@@ -105,7 +175,7 @@ export const ocrPart = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) throw new Error("LOVABLE_API_KEY não configurada");
+    if (!apiKey) throw new GatewayError("AUTH_MISSING", "Integração de IA não configurada. Ative o Lovable Cloud ou defina a chave de acesso.");
 
     const rawBase64 = data.imageBase64.includes(",")
       ? data.imageBase64.split(",")[1]
@@ -180,7 +250,7 @@ export const identifyPart = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) throw new Error("LOVABLE_API_KEY não configurada");
+    if (!apiKey) throw new GatewayError("AUTH_MISSING", "Integração de IA não configurada. Ative o Lovable Cloud ou defina a chave de acesso.");
 
     // Ensure image belongs to this user (RLS also enforces via storage prefix)
     if (!data.imagePath.startsWith(`${userId}/`)) {
@@ -466,7 +536,12 @@ export const getIntegrationHealth = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const started = Date.now();
     const checks: {
-      gateway: { ok: boolean; latencyMs: number | null; detail: string };
+      gateway: {
+        ok: boolean;
+        latencyMs: number | null;
+        detail: string;
+        errorCode?: GatewayError["code"];
+      };
       storage: { ok: boolean; latencyMs: number | null; detail: string };
       apiKey: { ok: boolean; detail: string };
     } = {
@@ -483,25 +558,26 @@ export const getIntegrationHealth = createServerFn({ method: "GET" })
     if (apiKey) {
       const t0 = Date.now();
       try {
-        const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({
-            model: "google/gemini-3-flash-preview",
-            messages: [{ role: "user", content: "ping" }],
-            max_tokens: 1,
-          }),
+        const callGateway = makeCallGateway(apiKey);
+        await callGateway({
+          model: "google/gemini-3-flash-preview",
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1,
         });
         checks.gateway.latencyMs = Date.now() - t0;
-        checks.gateway.ok = res.ok;
-        checks.gateway.detail = res.ok
-          ? `HTTP ${res.status} · gemini-3-flash-preview`
-          : `HTTP ${res.status} · ${(await res.text()).slice(0, 120)}`;
+        checks.gateway.ok = true;
+        checks.gateway.detail = "Gateway respondendo · gemini-3-flash-preview";
       } catch (e) {
         checks.gateway.latencyMs = Date.now() - t0;
-        checks.gateway.detail = e instanceof Error ? e.message : "Erro desconhecido";
+        if (e instanceof GatewayError) {
+          checks.gateway.errorCode = e.code;
+          checks.gateway.detail = e.message;
+        } else {
+          checks.gateway.detail = e instanceof Error ? e.message : "Erro desconhecido";
+        }
       }
     } else {
+      checks.gateway.errorCode = "AUTH_MISSING";
       checks.gateway.detail = "Sem API key para testar";
     }
 

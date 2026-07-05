@@ -5,6 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 import { identifyPart, ocrPart, searchTextHistory } from "@/lib/parts.functions";
 import { Camera, Upload, Search, Loader2, Scan, ChevronRight, Sparkles, X, Plus, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
+import { toastIntegrationError } from "@/lib/integration-errors";
 
 export const Route = createFileRoute("/_authenticated/app")({
   component: AppHome,
@@ -45,7 +46,7 @@ function AppHome() {
       setOcrResult(res);
       setEditableCodes(res.codes);
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toastIntegrationError(err),
   });
 
   const identifyMut = useMutation({
@@ -63,7 +64,7 @@ function AppHome() {
     onSuccess: (res) => {
       navigate({ to: "/result/$id", params: { id: res.id } });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toastIntegrationError(err),
   });
 
   const searchMut = useMutation({
@@ -75,7 +76,7 @@ function AppHome() {
         toast.success(`${res.results.length} resultado(s) encontrado(s)`);
       }
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toastIntegrationError(err),
   });
 
   const handleFile = async (file: File) => {

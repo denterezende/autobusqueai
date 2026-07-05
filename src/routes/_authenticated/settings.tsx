@@ -3,8 +3,9 @@ import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getProfile, updateProfile, getIntegrationHealth } from "@/lib/parts.functions";
 import { useEffect, useState } from "react";
-import { Settings, Loader2, Wrench, Store, Building2, User, Activity, CheckCircle2, XCircle, RefreshCw } from "lucide-react";
+import { Settings, Loader2, Wrench, Store, Building2, User, Activity, CheckCircle2, XCircle, RefreshCw, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import { parseIntegrationError, toastIntegrationError } from "@/lib/integration-errors";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   component: SettingsPage,
@@ -41,7 +42,7 @@ function SettingsPage() {
       toast.success("Perfil atualizado");
       qc.invalidateQueries({ queryKey: ["profile"] });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toastIntegrationError(err),
   });
 
   return (
@@ -154,13 +155,42 @@ function IntegrationHealthCard() {
           Verificando…
         </div>
       ) : h.error ? (
-        <div className="text-sm text-destructive">Falha ao consultar: {(h.error as Error).message}</div>
+        (() => {
+          const p = parseIntegrationError(h.error);
+          return (
+            <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+              <div className="flex items-center gap-2 font-semibold text-destructive">
+                <AlertTriangle className="h-4 w-4" />
+                {p.title}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">{p.description}</div>
+            </div>
+          );
+        })()
       ) : h.data ? (
         <div className="space-y-3">
           <div className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-mono uppercase tracking-widest ${statusColor}`}>
             <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
             {statusLabel} · {h.data.totalMs}ms
           </div>
+
+          {h.data.checks.gateway.errorCode &&
+            ["AUTH_INVALID", "AUTH_EXPIRED", "AUTH_MISSING"].includes(h.data.checks.gateway.errorCode) && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                <div className="flex items-center gap-2 font-semibold text-destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  Autenticação da IA com problema
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {h.data.checks.gateway.errorCode === "AUTH_EXPIRED"
+                    ? "A chave de acesso expirou. Rotacione a chave da integração para restabelecer o serviço."
+                    : h.data.checks.gateway.errorCode === "AUTH_MISSING"
+                      ? "Nenhuma chave de acesso está configurada para este projeto."
+                      : "A chave atual foi rejeitada pelo provedor. Rotacione a chave da integração e teste novamente."}
+                </div>
+              </div>
+            )}
+
           <div className="grid gap-2">
             <HealthRow name="LOVABLE_API_KEY" ok={h.data.checks.apiKey.ok} detail={h.data.checks.apiKey.detail} />
             <HealthRow
