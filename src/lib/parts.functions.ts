@@ -175,7 +175,7 @@ export const ocrPart = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) throw new Error("LOVABLE_API_KEY não configurada");
+    if (!apiKey) throw new GatewayError("AUTH_MISSING", "Integração de IA não configurada. Ative o Lovable Cloud ou defina a chave de acesso.");
 
     const rawBase64 = data.imageBase64.includes(",")
       ? data.imageBase64.split(",")[1]
@@ -250,7 +250,7 @@ export const identifyPart = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) throw new Error("LOVABLE_API_KEY não configurada");
+    if (!apiKey) throw new GatewayError("AUTH_MISSING", "Integração de IA não configurada. Ative o Lovable Cloud ou defina a chave de acesso.");
 
     // Ensure image belongs to this user (RLS also enforces via storage prefix)
     if (!data.imagePath.startsWith(`${userId}/`)) {
