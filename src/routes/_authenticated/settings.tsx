@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getProfile, updateProfile } from "@/lib/parts.functions";
+import { getProfile, updateProfile, getIntegrationHealth } from "@/lib/parts.functions";
 import { useEffect, useState } from "react";
-import { Settings, Loader2, Wrench, Store, Building2, User } from "lucide-react";
+import { Settings, Loader2, Wrench, Store, Building2, User, Activity, CheckCircle2, XCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/settings")({
