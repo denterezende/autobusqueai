@@ -458,3 +458,72 @@ export const updateProfile = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { ok: true };
   });
+
+// ---- Integration health ------------------------------------------------
+
+export const getIntegrationHealth = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const started = Date.now();
+    const checks: {
+      gateway: { ok: boolean; latencyMs: number | null; detail: string };
+      storage: { ok: boolean; latencyMs: number | null; detail: string };
+      apiKey: { ok: boolean; detail: string };
+    } = {
+      gateway: { ok: false, latencyMs: null, detail: "" },
+      storage: { ok: false, latencyMs: null, detail: "" },
+      apiKey: { ok: false, detail: "" },
+    };
+
+    const apiKey = process.env.LOVABLE_API_KEY;
+    checks.apiKey.ok = !!apiKey;
+    checks.apiKey.detail = apiKey ? "LOVABLE_API_KEY configurada" : "LOVABLE_API_KEY ausente";
+
+    // Gateway ping (tiny chat completion)
+    if (apiKey) {
+      const t0 = Date.now();
+      try {
+        const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model: "google/gemini-3-flash-preview",
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 1,
+          }),
+        });
+        checks.gateway.latencyMs = Date.now() - t0;
+        checks.gateway.ok = res.ok;
+        checks.gateway.detail = res.ok
+          ? `HTTP ${res.status} · gemini-3-flash-preview`
+          : `HTTP ${res.status} · ${(await res.text()).slice(0, 120)}`;
+      } catch (e) {
+        checks.gateway.latencyMs = Date.now() - t0;
+        checks.gateway.detail = e instanceof Error ? e.message : "Erro desconhecido";
+      }
+    } else {
+      checks.gateway.detail = "Sem API key para testar";
+    }
+
+    // Storage bucket check
+    const t1 = Date.now();
+    try {
+      const { error } = await context.supabase.storage
+        .from("part-images")
+        .list(`${context.userId}/`, { limit: 1 });
+      checks.storage.latencyMs = Date.now() - t1;
+      checks.storage.ok = !error;
+      checks.storage.detail = error ? error.message : "Bucket part-images acessível";
+    } catch (e) {
+      checks.storage.latencyMs = Date.now() - t1;
+      checks.storage.detail = e instanceof Error ? e.message : "Erro desconhecido";
+    }
+
+    const allOk = checks.apiKey.ok && checks.gateway.ok && checks.storage.ok;
+    return {
+      status: allOk ? "healthy" : checks.gateway.ok || checks.storage.ok ? "degraded" : "down",
+      totalMs: Date.now() - started,
+      checkedAt: new Date().toISOString(),
+      checks,
+    };
+  });
