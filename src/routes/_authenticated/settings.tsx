@@ -101,6 +101,117 @@ function SettingsPage() {
           </button>
         </div>
       )}
+
+      <IntegrationHealthCard />
+    </div>
+  );
+}
+
+function IntegrationHealthCard() {
+  const healthFn = useServerFn(getIntegrationHealth);
+  const h = useQuery({
+    queryKey: ["integration-health"],
+    queryFn: () => healthFn(),
+    refetchOnWindowFocus: false,
+  });
+
+  const statusColor =
+    h.data?.status === "healthy"
+      ? "text-success border-success/40 bg-success/5"
+      : h.data?.status === "degraded"
+        ? "text-warning border-warning/40 bg-warning/5"
+        : "text-destructive border-destructive/40 bg-destructive/5";
+
+  const statusLabel =
+    h.data?.status === "healthy"
+      ? "Operacional"
+      : h.data?.status === "degraded"
+        ? "Degradado"
+        : h.data?.status === "down"
+          ? "Fora do ar"
+          : "—";
+
+  return (
+    <div className="panel rounded-lg p-6 mt-6">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Activity className="h-5 w-5 text-primary" />
+          <h2 className="font-semibold">Saúde da integração de IA</h2>
+        </div>
+        <button
+          onClick={() => h.refetch()}
+          disabled={h.isFetching}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${h.isFetching ? "animate-spin" : ""}`} />
+          Testar agora
+        </button>
+      </div>
+
+      {h.isLoading ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Verificando…
+        </div>
+      ) : h.error ? (
+        <div className="text-sm text-destructive">Falha ao consultar: {(h.error as Error).message}</div>
+      ) : h.data ? (
+        <div className="space-y-3">
+          <div className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-mono uppercase tracking-widest ${statusColor}`}>
+            <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
+            {statusLabel} · {h.data.totalMs}ms
+          </div>
+          <div className="grid gap-2">
+            <HealthRow name="LOVABLE_API_KEY" ok={h.data.checks.apiKey.ok} detail={h.data.checks.apiKey.detail} />
+            <HealthRow
+              name="AI Gateway (chat)"
+              ok={h.data.checks.gateway.ok}
+              detail={h.data.checks.gateway.detail}
+              latencyMs={h.data.checks.gateway.latencyMs}
+            />
+            <HealthRow
+              name="Storage · part-images"
+              ok={h.data.checks.storage.ok}
+              detail={h.data.checks.storage.detail}
+              latencyMs={h.data.checks.storage.latencyMs}
+            />
+          </div>
+          <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            Última verificação: {new Date(h.data.checkedAt).toLocaleString("pt-BR")}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function HealthRow({
+  name,
+  ok,
+  detail,
+  latencyMs,
+}: {
+  name: string;
+  ok: boolean;
+  detail: string;
+  latencyMs?: number | null;
+}) {
+  return (
+    <div className="flex items-start gap-3 rounded-md border border-border bg-background px-3 py-2">
+      {ok ? (
+        <CheckCircle2 className="h-4 w-4 mt-0.5 text-success shrink-0" />
+      ) : (
+        <XCircle className="h-4 w-4 mt-0.5 text-destructive shrink-0" />
+      )}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm font-semibold">{name}</span>
+          {latencyMs != null && (
+            <span className="font-mono text-[10px] text-muted-foreground">{latencyMs}ms</span>
+          )}
+        </div>
+        <div className="text-xs text-muted-foreground break-words">{detail}</div>
+      </div>
     </div>
   );
 }
